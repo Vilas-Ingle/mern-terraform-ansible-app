@@ -1,0 +1,66 @@
+
+---
+- name: Install and configure MongoDB on the database server
+  hosts: database
+  become: true
+
+  vars:
+    mongodb_private_ip: "{{ groups['database'][0] }}"
+
+  tasks:
+    - name: Install MongoDB repository prerequisites
+      ansible.builtin.apt:
+        name:
+          - gnupg
+          - curl
+          - ca-certificates
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Download MongoDB 7.0 signing key
+      ansible.builtin.get_url:
+        url: https://pgp.mongodb.com/server-7.0.asc
+        dest: /tmp/mongodb-server-7.0.asc
+        mode: "0644"
+
+    - name: Convert MongoDB signing key to keyring format
+      ansible.builtin.command:
+        cmd: >
+          gpg --dearmor
+          --output /usr/share/keyrings/mongodb-server-7.0.gpg
+          /tmp/mongodb-server-7.0.asc
+        creates: /usr/share/keyrings/mongodb-server-7.0.gpg
+
+    - name: Configure MongoDB 7.0 repository
+      ansible.builtin.apt_repository:
+        repo: "deb [ arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse"
+        filename: mongodb-org-7.0
+        state: present
+        update_cache: true
+
+    - name: Install MongoDB
+      ansible.builtin.apt:
+        name: mongodb-org
+        state: present
+        update_cache: true
+
+    - name: Configure MongoDB network binding
+      ansible.builtin.lineinfile:
+        path: /etc/mongod.conf
+        regexp: '^  bindIp:'
+        line: "  bindIp: 127.0.0.1,{{ mongodb_private_ip }}"
+        backup: true
+      notify: Restart MongoDB
+
+    - name: Enable and start MongoDB
+      ansible.builtin.systemd:
+        name: mongod
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart MongoDB
+      ansible.builtin.systemd:
+        name: mongod
+        state: restarted

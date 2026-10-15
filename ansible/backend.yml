@@ -1,0 +1,150 @@
+
+---
+- name: Deploy TravelMemory Node.js backend
+  hosts: web
+  become: true
+
+  vars:
+    app_dir: /opt/travelmemory/backend
+    app_user: travelmemory
+    backend_port: 3001
+    mongodb_uri: "mongodb://{{ groups['database'][0] }}:27017/travelmemory"
+
+  tasks:
+    - name: Install Node.js repository prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create keyrings directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Download NodeSource signing key
+      ansible.builtin.get_url:
+        url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+        dest: /tmp/nodesource-repo.gpg.key
+        mode: "0644"
+
+    - name: Convert NodeSource signing key
+      ansible.builtin.command:
+        cmd: >
+          gpg --dearmor --yes
+          --output /etc/apt/keyrings/nodesource.gpg
+          /tmp/nodesource-repo.gpg.key
+      args:
+        creates: /etc/apt/keyrings/nodesource.gpg
+
+    - name: Configure Node.js 20 repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main"
+        filename: nodesource
+        state: present
+        update_cache: true
+
+    - name: Install Node.js and npm
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: true
+
+    - name: Create application group
+      ansible.builtin.group:
+        name: "{{ app_user }}"
+        system: true
+        state: present
+
+    - name: Create application user
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        group: "{{ app_user }}"
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+        state: present
+
+    - name: Create backend application directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+
+    - name: Copy backend application files
+      ansible.builtin.copy:
+        src: ../app-source/backend/
+        dest: "{{ app_dir }}/"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0644"
+      notify: Restart TravelMemory backend
+
+    - name: Install production backend dependencies
+      ansible.builtin.command:
+        cmd: npm install --omit=dev
+        chdir: "{{ app_dir }}"
+      become_user: "{{ app_user }}"
+      environment:
+        HOME: /tmp
+      args:
+        creates: "{{ app_dir }}/node_modules/express/package.json"
+
+    - name: Configure backend environment
+      ansible.builtin.copy:
+        dest: /etc/travelmemory-backend.env
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          PORT={{ backend_port }}
+          MONGO_URI={{ mongodb_uri }}
+      notify: Restart TravelMemory backend
+
+    - name: Install backend systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/travelmemory-backend.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=TravelMemory Node.js Backend
+          After=network.target
+
+          [Service]
+          Type=simple
+          User={{ app_user }}
+          Group={{ app_user }}
+          WorkingDirectory={{ app_dir }}
+          EnvironmentFile=/etc/travelmemory-backend.env
+          ExecStart=/usr/bin/node {{ app_dir }}/index.js
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Restart TravelMemory backend
+
+    - name: Enable and start backend service
+      ansible.builtin.systemd:
+        name: travelmemory-backend
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Restart TravelMemory backend
+      ansible.builtin.systemd:
+        name: travelmemory-backend
+        state: restarted
+        daemon_reload: true

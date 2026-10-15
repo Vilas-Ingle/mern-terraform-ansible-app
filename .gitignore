@@ -1,0 +1,35 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfplan
+crash.log
+
+# Credentials and environment files
+*.pem
+.env
+.env.*
+!.env.example
+.ansible/
+
+# Node.js dependencies and build output
+**/node_modules/
+**/build/
+
+# Editor and OS files
+.vscode/
+.DS_Store
+
+# Local cloud credentials and secrets
+.aws/
+**/credentials
+**/secrets.*
+**/*secret*
+*.key
+
+# Ansible generated files
+**/*.retry
+
+# Local Ansible inventory with live IPs and key paths
+ansible/inventory.ini
